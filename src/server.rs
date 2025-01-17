@@ -1,5 +1,6 @@
 use crate::make_https_request;
 use std::collections::HashMap;
+use warp::http::Method;
 use warp::{Filter, Rejection, Reply};
 
 #[derive(serde::Deserialize)]
@@ -86,13 +87,21 @@ pub async fn start_proxy_server_with_custom_routes(
     // Combine custom routes with the proxy route
     let routes = custom_routes.or(proxy_route);
 
-    // Start the server
-    println!("Starting proxy server on port {}", port);
     // Configure CORS with no rules
     let cors = warp::cors()
         .allow_any_origin() // 允许任意来源
-        .allow_methods(vec!["*"]) // 显式允许所有常见 HTTP 方法
-        .allow_headers(vec!["*"]); // 允许任意请求头
+        .allow_methods(vec![
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::HEAD,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers(vec![
+            "Content-Type",  // 必须允许的头，前端一般都会发送
+            "Authorization", // 如果需要身份验证
+        ]);
 
     // Start the server
     println!("Starting proxy server on port {}", port);
