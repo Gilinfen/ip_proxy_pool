@@ -55,9 +55,17 @@ pub async fn start_proxy_server_with_custom_routes(
     // Combine custom routes with the proxy route
     let routes = custom_routes.or(proxy_route);
 
+    // Configure CORS with no rules
+    let cors = warp::cors()
+        .allow_any_origin() // 允许任意来源
+        .allow_methods(vec!["*"]) // 显式允许所有常见 HTTP 方法
+        .allow_headers(vec!["*"]); // 允许任意请求头
+
     // Start the server
     println!("Starting proxy server on port {}", port);
-    warp::serve(routes).run(([127, 0, 0, 1], port)).await;
+    warp::serve(routes.with(cors))
+        .run(([127, 0, 0, 1], port))
+        .await;
 }
 
 /// Handles a proxy request by forwarding it through the dynamically provided proxy pool.
