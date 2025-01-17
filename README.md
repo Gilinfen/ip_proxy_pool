@@ -29,8 +29,6 @@
 ip_proxy_pool = { git = "https://github.com/Gilinfen/ip_proxy_pool.git" }
 ```
 
-将 `Gilinfen` 替换为你的 GitHub 用户名。
-
 ---
 
 ## 使用方法
