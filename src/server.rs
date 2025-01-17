@@ -35,6 +35,37 @@ impl ProxyPool {
     }
 }
 
+/// Handles a proxy request by forwarding it through the dynamically provided proxy pool.
+async fn handle_proxy_request(req: ProxyRequest) -> Result<impl warp::Reply, warp::Rejection> {
+    // 创建代理池
+    let mut proxy_pool = ProxyPool::new(req.proxies);
+
+    // 获取代理地址
+    let proxy_url = proxy_pool.get_proxy();
+
+    // 发起请求，直接使用传入的 URL
+    match make_https_request(
+        &req.url, // 不做任何处理，直接使用传入的 URL
+        &req.method,
+        req.headers,
+        req.body,
+        proxy_url.as_deref(),
+    )
+    .await
+    {
+        Ok(response) => Ok(warp::reply::json(&response)),
+        Err(err) => Err(warp::reject::custom(CustomError::ProxyRequestFailed(err))),
+    }
+}
+
+/// Custom error type for the proxy server.
+#[derive(Debug)]
+enum CustomError {
+    ProxyRequestFailed(String),
+}
+
+impl warp::reject::Reject for CustomError {}
+
 /// Starts a local proxy server with custom routes.
 ///
 /// # Arguments
@@ -55,40 +86,9 @@ pub async fn start_proxy_server_with_custom_routes(
     // Combine custom routes with the proxy route
     let routes = custom_routes.or(proxy_route);
 
-    // Configure CORS with no rules
-    let cors = warp::cors()
-        .allow_any_origin() // 允许任意来源
-        .allow_methods(vec!["*"]) // 显式允许所有常见 HTTP 方法
-        .allow_headers(vec!["*"]); // 允许任意请求头
-
     // Start the server
     println!("Starting proxy server on port {}", port);
-    warp::serve(routes.with(cors))
-        .run(([127, 0, 0, 1], port))
-        .await;
-}
-
-/// Handles a proxy request by forwarding it through the dynamically provided proxy pool.
-async fn handle_proxy_request(req: ProxyRequest) -> Result<impl warp::Reply, warp::Rejection> {
-    // Create a dynamic proxy pool from the provided proxies
-    let mut proxy_pool = ProxyPool::new(req.proxies);
-
-    // Get a proxy from the pool (if available)
-    let proxy_url = proxy_pool.get_proxy();
-
-    // Make the request with or without proxy
-    match make_https_request(
-        &req.url,
-        &req.method,
-        req.headers,
-        req.body,
-        proxy_url.as_deref(),
-    )
-    .await
-    {
-        Ok(response) => Ok(warp::reply::json(&response)),
-        Err(err) => Err(warp::reject::custom(CustomError::ProxyRequestFailed(err))),
-    }
+    warp::serve(routes).run(([127, 0, 0, 1], port)).await;
 }
 
 /// Handles rejections and returns a unified error response.
@@ -103,11 +103,3 @@ async fn handle_rejection(err: Rejection) -> Result<impl warp::Reply, std::conve
         )
     }
 }
-
-/// Custom error type for the proxy server.
-#[derive(Debug)]
-enum CustomError {
-    ProxyRequestFailed(String),
-}
-
-impl warp::reject::Reject for CustomError {}
