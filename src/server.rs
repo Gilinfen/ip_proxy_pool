@@ -1,6 +1,6 @@
 use crate::make_https_request;
 use std::collections::HashMap;
-use warp::Filter;
+use warp::{Filter, Rejection, Reply};
 
 #[derive(serde::Deserialize)]
 struct ProxyRequest {
@@ -35,21 +35,29 @@ impl ProxyPool {
     }
 }
 
-/// Starts a local proxy server.
+/// Starts a local proxy server with custom routes.
 ///
 /// # Arguments
 ///
 /// * `port` - The port to bind the server.
-pub async fn start_proxy_server(port: u16) {
-    // Define the proxy endpoint
+/// * `custom_routes` - A warp filter representing custom routes.
+pub async fn start_proxy_server_with_custom_routes(
+    port: u16,
+    custom_routes: impl Filter<Extract = impl Reply, Error = Rejection> + Clone + Send + Sync + 'static,
+) {
+    // Define the default proxy endpoint
     let proxy_route = warp::post()
         .and(warp::path("proxy"))
         .and(warp::body::json())
-        .and_then(handle_proxy_request);
+        .and_then(handle_proxy_request)
+        .recover(handle_rejection);
+
+    // Combine custom routes with the proxy route
+    let routes = custom_routes.or(proxy_route);
 
     // Start the server
     println!("Starting proxy server on port {}", port);
-    warp::serve(proxy_route).run(([127, 0, 0, 1], port)).await;
+    warp::serve(routes).run(([127, 0, 0, 1], port)).await;
 }
 
 /// Handles a proxy request by forwarding it through the dynamically provided proxy pool.
@@ -71,6 +79,27 @@ async fn handle_proxy_request(req: ProxyRequest) -> Result<impl warp::Reply, war
     .await
     {
         Ok(response) => Ok(warp::reply::json(&response)),
-        Err(err) => Ok(warp::reply::json(&serde_json::json!({ "error": err }))),
+        Err(err) => Err(warp::reject::custom(CustomError::ProxyRequestFailed(err))),
     }
 }
+
+/// Handles rejections and returns a unified error response.
+async fn handle_rejection(err: Rejection) -> Result<impl warp::Reply, std::convert::Infallible> {
+    if let Some(CustomError::ProxyRequestFailed(msg)) = err.find() {
+        Ok(warp::reply::json(&serde_json::json!({ "error": msg })).into_response())
+    } else {
+        // Return a generic error for other rejections
+        Ok(
+            warp::reply::json(&serde_json::json!({ "error": "Unhandled rejection" }))
+                .into_response(),
+        )
+    }
+}
+
+/// Custom error type for the proxy server.
+#[derive(Debug)]
+enum CustomError {
+    ProxyRequestFailed(String),
+}
+
+impl warp::reject::Reject for CustomError {}
