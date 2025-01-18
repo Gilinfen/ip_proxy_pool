@@ -10,7 +10,7 @@ struct ProxyRequest {
     method: String,
     headers: Option<HashMap<String, String>>,
     body: Option<String>,
-    proxies: Vec<String>, // 动态传递的代理列表
+    proxies: Option<Vec<String>>, // 改为可选类型
 }
 
 /// A basic proxy pool that operates with a given list of proxies.
@@ -39,8 +39,8 @@ impl ProxyPool {
 
 /// Handles a proxy request by forwarding it through the dynamically provided proxy pool.
 async fn handle_proxy_request(req: ProxyRequest) -> Result<impl warp::Reply, warp::Rejection> {
-    // 创建代理池
-    let mut proxy_pool = ProxyPool::new(req.proxies);
+    // 创建代理池，如果没有提供代理列表，则使用空列表
+    let mut proxy_pool = ProxyPool::new(req.proxies.unwrap_or_default());
 
     // 获取代理地址
     let proxy_url = proxy_pool.get_proxy();
@@ -59,6 +59,7 @@ async fn handle_proxy_request(req: ProxyRequest) -> Result<impl warp::Reply, war
         Err(err) => Err(warp::reject::custom(CustomError::ProxyRequestFailed(err))),
     }
 }
+
 use std::fmt;
 use warp::http::StatusCode;
 use warp::reject::Reject;
