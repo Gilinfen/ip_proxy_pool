@@ -1,5 +1,6 @@
 use crate::make_https_request;
 use std::collections::HashMap;
+use std::sync::Arc;
 use warp::http::Method;
 use warp::{Filter, Rejection, Reply};
 
@@ -58,14 +59,54 @@ async fn handle_proxy_request(req: ProxyRequest) -> Result<impl warp::Reply, war
         Err(err) => Err(warp::reject::custom(CustomError::ProxyRequestFailed(err))),
     }
 }
+use std::fmt;
+use warp::http::StatusCode;
+use warp::reject::Reject;
 
-/// Custom error type for the proxy server.
+/// 通用错误类型
 #[derive(Debug)]
-enum CustomError {
-    ProxyRequestFailed(String),
+pub enum CustomError {
+    ProxyRequestFailed(String), // 代理请求失败
+    InvalidRequest(String),     // 无效的请求
+    UnknownError,               // 未知错误
 }
 
-impl warp::reject::Reject for CustomError {}
+impl Reject for CustomError {}
+
+impl fmt::Display for CustomError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CustomError::ProxyRequestFailed(msg) => write!(f, "Proxy request failed: {}", msg),
+            CustomError::InvalidRequest(msg) => write!(f, "Invalid request: {}", msg),
+            CustomError::UnknownError => write!(f, "An unknown error occurred"),
+        }
+    }
+}
+
+pub async fn handle_rejection_with_custom(
+    err: Rejection,
+    custom_handler: Option<
+        Arc<dyn Fn(&Rejection) -> Option<(StatusCode, serde_json::Value)> + Send + Sync>,
+    >,
+) -> Result<impl Reply, std::convert::Infallible> {
+    if let Some(handler) = custom_handler {
+        if let Some((status, body)) = handler(&err) {
+            let json_response = warp::reply::json(&body);
+            return Ok(warp::reply::with_status(json_response, status));
+        }
+    }
+
+    // 默认错误处理
+    let json_response = warp::reply::json(&serde_json::json!({
+        "status": "error",
+        "message": "Unhandled rejection",
+    }));
+
+    Ok(warp::reply::with_status(
+        json_response,
+        StatusCode::INTERNAL_SERVER_ERROR,
+    ))
+}
 
 /// Starts a local proxy server with custom routes.
 ///
@@ -76,15 +117,18 @@ impl warp::reject::Reject for CustomError {}
 pub async fn start_proxy_server_with_custom_routes(
     port: u16,
     custom_routes: impl Filter<Extract = impl Reply, Error = Rejection> + Clone + Send + Sync + 'static,
+    custom_handler: Option<
+        Arc<dyn Fn(&Rejection) -> Option<(StatusCode, serde_json::Value)> + Send + Sync + 'static>,
+    >,
 ) {
-    // Define the default proxy endpoint
-    let proxy_route = warp::post()
-        .and(warp::path("proxy"))
+    // 默认的代理路由
+    let proxy_route = warp::path("proxy")
+        .and(warp::post())
         .and(warp::body::json())
         .and_then(handle_proxy_request)
-        .recover(handle_rejection);
+        .recover(move |err| handle_rejection_with_custom(err, custom_handler.clone()));
 
-    // Combine custom routes with the proxy route
+    // 合并自定义路由和代理路由
     let routes = custom_routes.or(proxy_route);
 
     // Configure CORS with no rules
@@ -108,17 +152,4 @@ pub async fn start_proxy_server_with_custom_routes(
     warp::serve(routes.with(cors))
         .run(([127, 0, 0, 1], port))
         .await;
-}
-
-/// Handles rejections and returns a unified error response.
-async fn handle_rejection(err: Rejection) -> Result<impl warp::Reply, std::convert::Infallible> {
-    if let Some(CustomError::ProxyRequestFailed(msg)) = err.find() {
-        Ok(warp::reply::json(&serde_json::json!({ "error": msg })).into_response())
-    } else {
-        // Return a generic error for other rejections
-        Ok(
-            warp::reply::json(&serde_json::json!({ "error": "Unhandled rejection" }))
-                .into_response(),
-        )
-    }
 }

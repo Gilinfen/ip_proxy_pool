@@ -1,9 +1,21 @@
-use ip_proxy_pool::start_proxy_server_with_custom_routes;
-use warp::Filter;
+use std::sync::Arc;
+
+use ip_proxy_pool::{start_proxy_server_with_custom_routes, CustomError};
+use reqwest::StatusCode;
+use warp::{reject::Rejection, Filter};
 
 /// A custom function for the "hello" route.
 async fn hello_function() -> Result<impl warp::Reply, warp::Rejection> {
     let result = "Hello, this is the hello route!";
+    // 模拟一个自定义错误
+    let simulate_error = true;
+
+    if simulate_error {
+        return Err(warp::reject::custom(CustomError::InvalidRequest(
+            "Simulated error in hello route".to_string(),
+        )));
+    }
+
     Ok(warp::reply::json(&serde_json::json!({ "message": result })))
 }
 
@@ -21,7 +33,23 @@ async fn status_function() -> Result<impl warp::Reply, warp::Rejection> {
 
 #[tokio::main]
 async fn main() {
-    // Define individual routes
+    // 自定义错误处理函数
+    let custom_handler = Arc::new(
+        |err: &Rejection| -> Option<(StatusCode, serde_json::Value)> {
+            if let Some(custom_error) = err.find::<CustomError>() {
+                match custom_error {
+                    CustomError::InvalidRequest(msg) => Some((
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({ "status": "error", "message": msg }),
+                    )),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        },
+    );
+
     let hello_route = warp::path("hello")
         .and(warp::get())
         .and_then(hello_function);
@@ -38,6 +66,5 @@ async fn main() {
     let custom_routes = hello_route.or(goodbye_route).or(status_route);
 
     // Start the proxy server with the custom routes
-    let port = 8080;
-    start_proxy_server_with_custom_routes(port, custom_routes).await;
+    start_proxy_server_with_custom_routes(8080, custom_routes, Some(custom_handler)).await;
 }
